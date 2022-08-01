@@ -5,48 +5,101 @@
 // Have a constant value for a 'countdown timer'. declared here. and show the countdown to both parties
 
 const COUNTDOWN = 10;
+const DEADLINE = 20;
 
 const shared = {
-  displayTime: Fun([UInt], Null)
+  displayTime: Fun([UInt], Null),
+  informTimeout: Fun([], Null)
 }
 
 export const main = Reach.App(() => {
   const D = Participant('Deployer', {
     ...shared,
     inheritance: UInt,
+    // inToken: Token,
+    getParams: Fun([], Object({
+      name: Bytes(32), symbol: Bytes(8),
+      url: Bytes(96), metadata: Bytes(32),
+      supply: UInt,
+      amt: UInt,
+    })),
     getChoice: Fun([Null], Bool)
   });
-  const A = Participant('Attacher', {
+  const A = API('Attacher', {
     ...shared,
     acceptTerms: Fun([UInt], Bool),
   });
   init();
+
+  const informTimeout = () => {
+    each([D, A], () => {
+      interact.informTimeout();
+    });
+  };
+
   
   D.only(() => {
     const value = declassify(interact.inheritance)
+    // const tokenId = declassify(interact.inToken)
+    const { name, symbol, url, metadata, supply, amt } = declassify(interact.getParams());
+    // return [value, tokenId]
   })
-  D.publish(value).pay(value)
+  D.publish(value, name, symbol, url, metadata, supply, amt)
+  require(4 * amt <= supply);
+  require(4 * amt <= UInt.max);
+  const md1 = {name, symbol, url, metadata, supply};
+  const tok1 = new Token(md1);
   commit();
+  D.pay([[value, tok1]])
 
-  A.only(() => {
-    const terms = declassify(interact.acceptTerms(value))
-  })
-  A.publish(terms);
+
+  // Make this an api call, 
+  // and store it in a map
+  // A.only(() => {
+  //   const terms = declassify(interact.acceptTerms(value))
+  // })
+  // A.publish(terms);
+  const [[], k] = call(acceptTerms).
   commit();
 
   each([D, A], ()=> {
     interact.displayTime(COUNTDOWN)
   })
+  D.publish()
 
-  D.only(()=> {
-    const option = declassify(interact.getChoice(null))
-  })
-  D.publish(option)
-  if (option) {
-    transfer(value).to(D)
-  } else {
-    transfer(value).to(A)
+  
+
+  const timeRemaining = lastConsensusTime() + COUNTDOWN
+  var [timer, choice] = [timeRemaining, true]
+  invariant(balance() == value)
+  while (choice) {
+    // commit()
+
+    if (timer == 0) {
+      transfer(value).to(D)
+      commit()
+      exit()
+    } else {
+      commit()
+      D.only(()=> {
+        const option = declassify(interact.getChoice(null))
+      })
+      D.publish(option).timeout(relativeTime(DEADLINE), () => closeTo(A, informTimeout));
+    [timer, choice] = [timer - lastConsensusTime(), option];
+    continue;
+    }
+   
+
+    // [timer, choice] = [timer - lastConsensusTime(), option];
+    // continue;
   }
+  // if (option) {
+  //   transfer(value).to(D)
+  // } else {
+
+  //make this an api call too to transfer to everyone.
+    transfer(value).to(A)
+  // }
   commit()
   
   exit();

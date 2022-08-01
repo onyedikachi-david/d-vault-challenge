@@ -1,46 +1,85 @@
-import {loadStdlib} from '@reach-sh/stdlib';
+import {loadStdlib, ask} from '@reach-sh/stdlib';
 import * as backend from './build/index.main.mjs';
 const stdlib = loadStdlib(process.env);
 
-const startingBalance = stdlib.parseCurrency(100);
+if (process.argv.length < 3 || ['deployer', 'attacher'].includes(process.argv[2]) == false) {
+  console.log('Usage: reach run index [deployer|attacher]');
+  process.exit(0);
+}
 
-const accAttacher = await stdlib.newTestAccount(startingBalance);
-const accDeployer = await stdlib.newTestAccount(stdlib.parseCurrency(6000))
-console.log('Hello, Alice and Bob!');
+const role = process.argv[2];
+console.log(`Starting as ${role}`)
 
-const bal = async (who) => { return stdlib.formatCurrency((await stdlib.balanceOf(who)))}
-console.log(`Deployer's balance before: ${await bal(accDeployer)}`)
-console.log(`Attacher's balance before: ${await bal(accAttacher)}`)
+const toAU = (su) => stdlib.parseCurrency(su);
+const toSU = (au) => stdlib.formatCurrency(au, 4);
+const iDeployerBalance = toAU(6000);
+const iAttacherBalance = toAU(500)
+const showBalance = async (acc) => console.log(`Your balance is ${toSU(await stdlib.balanceOf(acc))}.`);
 
-console.log('Launching...');
-const ctcDeployer = accDeployer.contract(backend);
-const ctcAttacher = accAttacher.contract(backend, ctcDeployer.getInfo());
-
-const choiceArray = ["I'm here", "I'm not here"]
-const shared = {
-  displayTime: (time) => {
-    console.log(`Count down time: ${time}`)
+// shared interact object.
+const sharedInteract = {
+  displayTime: async (time) => {
+    console.log(`Time count: ${time}`)
+  },
+  informTimeout: async () => {
+    console.log("Time out occured")
   }
 }
-console.log('Starting backends...');
-await Promise.all([
-  backend.Deployer(ctcDeployer, {
-    ...shared,
-    inheritance: stdlib.parseCurrency(5000),
-    getChoice: () => {
-      const choice = Math.floor(Math.random() * 2)
-      console.log(`Deployer decision is ${choiceArray[choice]}`)
-      return (choice == 1 ? false : true)
+
+// Deployer:
+if (role == 'deployer') {
+  const choiceArray = ["I'm still here", "I'm not here" ];
+  const amt = await ask.ask(`How much do you want to put into the vault contract`, stdlib.parseCurrency);
+  const  deployerInteract = {
+    ...sharedInteract,
+    ready: async () => {
+      console.log(`Contract is ready...${JSON.stringify(await ctc.getInfo())}`);
+  },
+    inheritance: amt,
+    getChoice: async () => {
+      const choice = await ask.ask(
+        `Are you still here?`,
+        ask.yesno
+      );
+      console.log(`Your choice is ${choice ? choiceArray[0] : choiceArray[1]}`);
+      return (choice ? true : false);
+    },
+    deadline: 10,
+
+  }
+
+  console.log("Creating a test account...")
+  const deployerAcc = await stdlib.newTestAccount(iDeployerBalance);
+  await showBalance(deployerAcc);
+  const ctc = deployerAcc.contract(backend);
+    // console.log(`Contract lauched successfully, id: ${JSON.stringify(await ctc.getInfo())}, copy and paste in another terminal.`)
+  await ctc.participants.Deployer(deployerInteract);
+  await showBalance(deployerAcc);
+  console.log("done !!")
+  process.exit(0)
+
+} else {
+  const attacherInteract = {
+    ...sharedInteract,
+    acceptTerms: async (num) => {
+      const accept = await ask.ask(
+        `do you accepts the terms of The Vault for ${stdlib.formatCurrency(num)}?`,
+        ask.yesno
+      );
+      if (!accept) {
+        process.exit(0);
+      }
+      return (accept ? true : false);
     }
-  }),
-  backend.Attacher(ctcAttacher, {
-    ...shared,
-    acceptTerms: (amt) => {
-      console.log(`Accepts vaults of: ${amt}`)
-      return true
-    }
-  }),
-]);
-console.log(`Deployer's balance after: ${await bal(accDeployer)}`)
-console.log(`Attacher's balance after: ${await bal(accAttacher)}`)
-console.log('Goodbye, Alice and Bob!');
+  }
+
+  console.log("Creating a test account...");
+  const attacherAcc = await stdlib.newTestAccount(iAttacherBalance);
+  await showBalance(attacherAcc);
+  const info = await ask.ask('Paste contract info:', (s) => JSON.parse(s));
+  const ctca = attacherAcc.contract(backend, info);
+  await ctca.p.Attacher(attacherInteract);
+  await showBalance(attacherAcc)
+  process.exit(0)
+
+}

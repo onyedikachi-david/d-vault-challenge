@@ -4,28 +4,39 @@
 // Attacher will send a boolean to the backend to accept vault, Attacher should see the vault then
 // Have a constant value for a 'countdown timer'. declared here. and show the countdown to both parties
 
-const COUNTDOWN = 10;
+const COUNTDOWN = 20;
+const DEADLINE = 20;
 
 const shared = {
-  displayTime: Fun([UInt], Null)
+  displayTime: Fun([UInt], Null),
+  informTimeout: Fun([], Null)
 }
 
 export const main = Reach.App(() => {
   const D = Participant('Deployer', {
     ...shared,
+    ready: Fun([], Null),
     inheritance: UInt,
-    getChoice: Fun([Null], Bool)
+    getChoice: Fun([], Bool),
+    deadline: UInt, // time delta (blocks/rounds)
   });
   const A = Participant('Attacher', {
     ...shared,
     acceptTerms: Fun([UInt], Bool),
   });
   init();
+
+//  D.publish()
+//  commit()
+
   
   D.only(() => {
     const value = declassify(interact.inheritance)
+    const deadline = declassify(interact.deadline);
+    // interact.ready();
   })
-  D.publish(value).pay(value)
+  D.publish(value, deadline).pay(value)
+  D.interact.ready();
   commit();
 
   A.only(() => {
@@ -37,16 +48,46 @@ export const main = Reach.App(() => {
   each([D, A], ()=> {
     interact.displayTime(COUNTDOWN)
   })
+  D.publish()
 
-  D.only(()=> {
-    const option = declassify(interact.getChoice(null))
-  })
-  D.publish(option)
-  if (option) {
-    transfer(value).to(D)
-  } else {
-    transfer(value).to(A)
+  
+
+  // const timeRemaining = lastConsensusTime() + COUNTDOWN
+  var [timer, choice] = [20 + lastConsensusTime(), true]
+  invariant(balance() == value)
+  while (choice) {
+    // commit()
+
+    const informTimeout = () => {
+      each([D, A], () => {
+        interact.informTimeout();
+        // interact.displayTime(COUNTDOWN)
+      });
+    };
+
+    if (timer == lastConsensusTime()) {
+      transfer(value).to(D)
+      commit()
+      exit()
+    } else {
+      commit()
+      D.only(()=> {
+        const option = declassify(interact.getChoice())
+      })
+      D.publish(option).timeout(relativeTime(deadline), () => closeTo(A, informTimeout));
+    [timer, choice] = [timer - 1, option];
+    continue;
+    }
+   
+
+    // [timer, choice] = [timer - lastConsensusTime(), option];
+    // continue;
   }
+  // if (option) {
+  //   transfer(value).to(D)
+  // } else {
+    transfer(value).to(A)
+  // }
   commit()
   
   exit();
